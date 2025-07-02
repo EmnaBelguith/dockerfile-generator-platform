@@ -1,0 +1,30 @@
+# .github/workflows/main.yml
+name: Hello CI/CD World
+
+# Ce workflow se déclenche sur les événements de push vers la branche 'main'
+on:
+  push:
+    branches:
+      - main # S'exécute quand du code est poussé sur la branche 'main'
+
+  # Permet de déclencher le workflow manuellement depuis l'interface GitHub
+  workflow_dispatch:
+
+jobs:
+  # Nom de la tâche
+  build-test-job:
+    # L'environnement sur lequel le job va s'exécuter
+    runs-on: ubuntu-latest # Utilise un runner hébergé par GitHub (Linux)
+
+    steps:
+      # Étape 1 : Cloner le dépôt de code
+      - name: Checkout code
+        uses: actions/checkout@v4 # Action officielle de GitHub pour cloner le dépôt
+
+      # Étape 2 : Afficher un message simple
+      - name: Say Hello
+        run: echo "Hello from GitHub Actions CI/CD!"
+
+      # Étape 3 : Vérifier l'accès à Docker (important pour la suite du projet)
+      - name: Check Docker access
+        run: docker info
