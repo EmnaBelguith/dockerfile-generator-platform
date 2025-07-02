@@ -1,30 +1,48 @@
 # .github/workflows/main.yml
-name: Hello CI/CD World
+# Nom du workflow qui apparaîtra dans l'onglet "Actions" de GitHub
+name: Docker Build and Push Python App
 
-# Ce workflow se déclenche sur les événements de push vers la branche 'main'
+# Déclencheurs du workflow
 on:
+  # Le workflow se déclenchera chaque fois qu'il y a un push sur la branche 'main'
   push:
     branches:
-      - main # S'exécute quand du code est poussé sur la branche 'main'
+      - main
 
   # Permet de déclencher le workflow manuellement depuis l'interface GitHub
   workflow_dispatch:
 
+# Définition des jobs (tâches) à exécuter
 jobs:
-  # Nom de la tâche
-  build-test-job:
-    # L'environnement sur lequel le job va s'exécuter
-    runs-on: ubuntu-latest # Utilise un runner hébergé par GitHub (Linux)
+  # Nom du job : Construction et publication de l'image Docker
+  build-and-publish:
+    # Le job s'exécutera sur une machine virtuelle Ubuntu hébergée par GitHub
+    runs-on: ubuntu-latest
 
+    # Étapes du job
     steps:
-      # Étape 1 : Cloner le dépôt de code
+      # Étape 1 : Cloner le dépôt de code sur le runner
       - name: Checkout code
-        uses: actions/checkout@v4 # Action officielle de GitHub pour cloner le dépôt
+        uses: actions/checkout@v4
 
-      # Étape 2 : Afficher un message simple
-      - name: Say Hello
-        run: echo "Hello from GitHub Actions CI/CD!"
+      # Étape 2 : Configurer Docker Buildx pour des builds Docker améliorés
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      # Étape 3 : Vérifier l'accès à Docker (important pour la suite du projet)
-      - name: Check Docker access
-        run: docker info
+      # Étape 3 : Se connecter à Docker Hub
+      # Utilise les secrets DOCKER_USERNAME et DOCKER_PASSWORD que tu as configurés
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }} # Récupère le nom d'utilisateur depuis les secrets
+          password: ${{ secrets.DOCKER_PASSWORD }} # Récupère le mot de passe/PAT depuis les secrets
+
+      # Étape 4 : Construire et pousser l'image Docker
+      - name: Build and push Docker image
+        run: |
+          # Remplace 'ton_nom_utilisateur_dockerhub' par ton nom d'utilisateur Docker Hub exact
+          # Exemple : docker build -t emna1belghith/python-docker-app:latest .
+          # Le '.' à la fin indique que le Dockerfile se trouve dans le répertoire courant (racine du dépôt)
+          docker build -t emna1belghith/python-docker-app:latest .
+          # Pousse l'image construite vers Docker Hub
+          docker push emna1belghith/python-docker-app:latest
