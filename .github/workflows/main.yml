@@ -1,46 +1,34 @@
 # .github/workflows/main.yml
 # Nom du workflow qui apparaîtra dans l'onglet "Actions" de GitHub
-name: Docker Build, Push and Test Python App
+name: Docker Build, Push and Test Generic App
 
 # Déclencheurs du workflow
 on:
-  # Le workflow se déclenchera chaque fois qu'il y a un push sur la branche 'main'
   push:
     branches:
       - main
-
-  # Permet de déclencher le workflow manuellement depuis l'interface GitHub
   workflow_dispatch:
 
 # Définition des jobs (tâches) à exécuter
 jobs:
-  # Nom du job : Construction et publication de l'image Docker
   build-and-publish:
-    # Le job s'exécutera sur une machine virtuelle Ubuntu hébergée par GitHub
     runs-on: ubuntu-latest
-
-    # Étapes du job
     steps:
-      # Étape 1 : Cloner le dépôt de code sur le runner
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Étape 2 : Configurer Docker Buildx pour des builds Docker améliorés
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Étape 3 : Se connecter à Docker Hub
-      # Utilise les secrets DOCKER_USERNAME et DOCKER_PASSWORD que tu as configurés
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }} # Récupère le nom d'utilisateur depuis les secrets
-          password: ${{ secrets.DOCKER_PASSWORD }} # Récupère le mot de passe/PAT depuis les secrets
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Étape 4 : Construire et pousser l'image Docker
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=emna1belghith/python-docker-app
+          IMAGE_NAME=emna1belghith/python-docker-app # Adaptez ce nom si vous avez une logique de nommage dynamique par projet
           IMAGE_TAG=${{ github.sha }} # Utilise le SHA du commit comme tag unique
           
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
@@ -50,57 +38,74 @@ jobs:
           docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
           docker push $IMAGE_NAME:latest
 
-  # Nouveau job : Tester l'image Docker après la publication
+  # Nouveau job : Tester l'image Docker de manière plus générique
   test-image:
-    # Ce job ne s'exécutera que si le job 'build-and-publish' a réussi
-    needs: build-and-publish
+    needs: build-and-publish # Ce job ne s'exécute que si le job précédent a réussi
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code (pour accéder au Dockerfile si nécessaire pour le contexte)
-        uses: actions/checkout@v4
-
-      - name: Pull Docker image from Docker Hub
+      - name: Pull Docker image
         run: |
           IMAGE_NAME=emna1belghith/python-docker-app
           IMAGE_TAG=${{ github.sha }}
           docker pull $IMAGE_NAME:$IMAGE_TAG
           echo "Image $IMAGE_NAME:$IMAGE_TAG pulled successfully."
 
-      - name: Run Docker container
+      - name: Run Docker container for testing
+        id: run_container # Ajoute un ID pour référencer cette étape
         run: |
           IMAGE_NAME=emna1belghith/python-docker-app
           IMAGE_TAG=${{ github.sha }}
-          # Exécute le conteneur en arrière-plan (-d) et mappe le port 5000
-          docker run -d --name my-flask-app -p 5000:5000 $IMAGE_NAME:$IMAGE_TAG
-          echo "Container 'my-flask-app' started on port 5000."
+          # Exécute le conteneur en arrière-plan (-d)
+          # Le port 8080 est un port commun pour les applications web.
+          # Idéalement, le Dockerfile généré devrait exposer le bon port.
+          # Pour une application Flask, ce serait 5000. Pour Spring Boot, 8080.
+          # Vous pouvez rendre cela dynamique si votre analyse de projet le permet.
+          docker run -d --name test-app -p 8080:8080 $IMAGE_NAME:$IMAGE_TAG
+          echo "Container 'test-app' started on port 8080."
+          echo "container_id=$(docker ps -aqf "name=test-app")" >> $GITHUB_OUTPUT
 
-      - name: Wait for the application to start
+      - name: Wait for application to be healthy (Generic Health Check)
+        # Cette étape va essayer de se connecter à l'application plusieurs fois
+        # C'est une approche plus robuste qu'un simple 'sleep'
         run: |
-          # Attend que l'application soit prête (ajuster le temps si nécessaire)
-          echo "Waiting for Flask app to start..."
-          sleep 10 # Attendre 10 secondes pour que l'app Flask démarre
-          echo "Wait complete. Attempting health check."
+          echo "Waiting for app to be ready..."
+          HEALTH_URL="http://localhost:8080/" # URL de base pour le test de santé.
+                                            # Si votre prompt Ollama demande un /health endpoint, utilisez http://localhost:8080/health
+          MAX_RETRIES=15 # Nombre maximal de tentatives
+          RETRY_DELAY=5  # Délai entre les tentatives en secondes
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i/$MAX_RETRIES: Checking $HEALTH_URL"
+            # curl --fail: échoue si le code HTTP n'est pas 2xx
+            # -s: mode silencieux
+            if curl --fail -s $HEALTH_URL; then
+              echo "Application is healthy and responsive!"
+              exit 0 # Succès, sortir de la boucle
+            else
+              echo "Application not ready yet. Retrying in $RETRY_DELAY seconds..."
+              sleep $RETRY_DELAY
+            fi
+          done
+          echo "Application did not become healthy within the time limit. Check container logs for errors."
+          docker logs test-app # Affiche les logs du conteneur avant d'échouer
+          exit 1 # Fait échouer le job GitHub Actions si l'application ne démarre pas
 
-      - name: Test the application (HTTP GET request)
+      # Optionnel: Exécuter des tests d'intégration si le projet en a
+      # Cette étape serait plus complexe et dépendrait de la structure du projet analysée
+      - name: Run Integration Tests (if applicable)
+        # if: steps.analyze_project.outputs.project_type == 'python' && contains(github.event.repository.name, 'tests')
         run: |
-          # Envoie une requête curl et vérifie la réponse
-          # --fail fera échouer la commande si le statut HTTP n'est pas 2xx
-          # Utilisez l'IP du localhost du runner
-          RESPONSE=$(curl --fail http://localhost:5000)
-          echo "Application responded with: $RESPONSE"
-          # Vérifie si la réponse contient le texte attendu
-          if [[ "$RESPONSE" == *"Hello from Flask!"* ]]; then
-            echo "Test passed: 'Hello from Flask!' found in response."
-          else
-            echo "Test failed: Expected 'Hello from Flask!' but got '$RESPONSE'."
-            exit 1 # Fait échouer le job GitHub Actions
-          fi
+          echo "This step would run integration tests if the project has them."
+          echo "Example for Python (pytest): docker exec test-app pytest /app/tests/"
+          echo "Example for Node.js (jest): docker exec test-app npm test"
+          # Pour l'instant, c'est un placeholder.
+          # L'implémentation réelle nécessiterait de savoir comment les tests sont lancés dans le conteneur.
 
       - name: Clean up Docker container
         if: always() # S'exécute toujours, même si les étapes précédentes échouent
         run: |
-          echo "Stopping and removing container 'my-flask-app'..."
-          docker stop my-flask-app || true # '|| true' pour ne pas échouer si le conteneur n'existe pas
-          docker rm my-flask-app || true
+          echo "Stopping and removing container 'test-app'..."
+          docker stop test-app || true # '|| true' pour ne pas échouer si le conteneur n'existe pas
+          docker rm test-app || true
           echo "Container cleaned up."
