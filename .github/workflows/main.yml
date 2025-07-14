@@ -1,6 +1,6 @@
 # .github/workflows/main.yml
 # Nom du workflow qui apparaîtra dans l'onglet "Actions" de GitHub
-name: Docker Build, Push and Test Generic App
+name: Docker Build, Push and Test Flask App
 
 # Déclencheurs du workflow
 on:
@@ -28,7 +28,9 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME=emna1belghith/python-docker-app # Adaptez ce nom si vous avez une logique de nommage dynamique par projet
+          # Remplace 'emna1belghith' par ton nom d'utilisateur Docker Hub exact
+          # Le '.' à la fin indique que le Dockerfile se trouve dans le répertoire courant (racine du dépôt)
+          IMAGE_NAME=emna1belghith/python-docker-app
           IMAGE_TAG=${{ github.sha }} # Utilise le SHA du commit comme tag unique
           
           docker build -t $IMAGE_NAME:$IMAGE_TAG .
@@ -38,7 +40,7 @@ jobs:
           docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
           docker push $IMAGE_NAME:latest
 
-  # Nouveau job : Tester l'image Docker de manière plus générique
+  # Nouveau job : Tester l'image Docker pour l'application Flask
   test-image:
     needs: build-and-publish # Ce job ne s'exécute que si le job précédent a réussi
     runs-on: ubuntu-latest
@@ -51,61 +53,52 @@ jobs:
           docker pull $IMAGE_NAME:$IMAGE_TAG
           echo "Image $IMAGE_NAME:$IMAGE_TAG pulled successfully."
 
-      - name: Run Docker container for testing
+      - name: Run Docker container for testing Flask app
         id: run_container # Ajoute un ID pour référencer cette étape
         run: |
           IMAGE_NAME=emna1belghith/python-docker-app
           IMAGE_TAG=${{ github.sha }}
-          # Exécute le conteneur en arrière-plan (-d)
-          # Le port 8080 est un port commun pour les applications web.
-          # Idéalement, le Dockerfile généré devrait exposer le bon port.
-          # Pour une application Flask, ce serait 5000. Pour Spring Boot, 8080.
-          # Vous pouvez rendre cela dynamique si votre analyse de projet le permet.
-          docker run -d --name test-app -p 8080:8080 $IMAGE_NAME:$IMAGE_TAG
-          echo "Container 'test-app' started on port 8080."
+          # CORRECTION CLÉ ICI : Mappe le port 8080 du runner au port 5000 du conteneur (où Flask écoute)
+          docker run -d --name test-app -p 8080:5000 $IMAGE_NAME:$IMAGE_TAG
+          echo "Conteneur 'test-app' démarré sur le port 8080 du runner (mappé au port 5000 du conteneur)."
           echo "container_id=$(docker ps -aqf "name=test-app")" >> $GITHUB_OUTPUT
 
-      - name: Wait for application to be healthy (Generic Health Check)
-        # Cette étape va essayer de se connecter à l'application plusieurs fois
-        # C'est une approche plus robuste qu'un simple 'sleep'
+      - name: Wait for Flask application to start
         run: |
-          echo "Waiting for app to be ready..."
-          HEALTH_URL="http://localhost:8080/" # URL de base pour le test de santé.
-                                            # Si votre prompt Ollama demande un /health endpoint, utilisez http://localhost:8080/health
+          echo "Attente du démarrage de l'application Flask..."
+          # L'URL de test doit pointer vers le port 8080 du runner
+          HEALTH_URL="http://localhost:8080/" 
           MAX_RETRIES=15 # Nombre maximal de tentatives
           RETRY_DELAY=5  # Délai entre les tentatives en secondes
           
           for i in $(seq 1 $MAX_RETRIES); do
-            echo "Attempt $i/$MAX_RETRIES: Checking $HEALTH_URL"
+            echo "Tentative $i/$MAX_RETRIES: Vérification de $HEALTH_URL"
             # curl --fail: échoue si le code HTTP n'est pas 2xx
             # -s: mode silencieux
-            if curl --fail -s $HEALTH_URL; then
-              echo "Application is healthy and responsive!"
-              exit 0 # Succès, sortir de la boucle
+            RESPONSE=$(curl --fail -s $HEALTH_URL)
+            if [[ "$?" -eq 0 ]]; then # Vérifie si curl a réussi (code de retour 0)
+              echo "Application est saine et répond !"
+              # Vérifie si la réponse contient le texte spécifique de Flask
+              if [[ "$RESPONSE" == *"Hello from Flask!"* ]]; then
+                echo "Test réussi : 'Hello from Flask!' trouvé dans la réponse."
+                exit 0 # Succès, sortir de la boucle
+              else
+                echo "Test échoué : Attendu 'Hello from Flask!' mais obtenu '$RESPONSE'."
+                exit 1 # Fait échouer le job GitHub Actions
+              fi
             else
-              echo "Application not ready yet. Retrying in $RETRY_DELAY seconds..."
+              echo "Application pas encore prête ou erreur de connexion. Nouvelle tentative dans $RETRY_DELAY secondes..."
               sleep $RETRY_DELAY
             fi
           done
-          echo "Application did not become healthy within the time limit. Check container logs for errors."
+          echo "L'application n'est pas devenue saine dans le délai imparti. Vérifiez les logs du conteneur pour les erreurs."
           docker logs test-app # Affiche les logs du conteneur avant d'échouer
           exit 1 # Fait échouer le job GitHub Actions si l'application ne démarre pas
-
-      # Optionnel: Exécuter des tests d'intégration si le projet en a
-      # Cette étape serait plus complexe et dépendrait de la structure du projet analysée
-      - name: Run Integration Tests (if applicable)
-        # if: steps.analyze_project.outputs.project_type == 'python' && contains(github.event.repository.name, 'tests')
-        run: |
-          echo "This step would run integration tests if the project has them."
-          echo "Example for Python (pytest): docker exec test-app pytest /app/tests/"
-          echo "Example for Node.js (jest): docker exec test-app npm test"
-          # Pour l'instant, c'est un placeholder.
-          # L'implémentation réelle nécessiterait de savoir comment les tests sont lancés dans le conteneur.
 
       - name: Clean up Docker container
         if: always() # S'exécute toujours, même si les étapes précédentes échouent
         run: |
-          echo "Stopping and removing container 'test-app'..."
+          echo "Arrêt et suppression du conteneur 'test-app'..."
           docker stop test-app || true # '|| true' pour ne pas échouer si le conteneur n'existe pas
           docker rm test-app || true
-          echo "Container cleaned up."
+          echo "Conteneur nettoyé."
