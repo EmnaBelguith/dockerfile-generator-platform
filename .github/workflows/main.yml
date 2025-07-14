@@ -1,6 +1,6 @@
 # .github/workflows/main.yml
 # Nom du workflow qui apparaîtra dans l'onglet "Actions" de GitHub
-name: Docker Build and Push Python App
+name: Docker Build, Push and Test Python App
 
 # Déclencheurs du workflow
 on:
@@ -40,9 +40,67 @@ jobs:
       # Étape 4 : Construire et pousser l'image Docker
       - name: Build and push Docker image
         run: |
-          # Remplace 'ton_nom_utilisateur_dockerhub' par ton nom d'utilisateur Docker Hub exact
-          # Exemple : docker build -t emna1belghith/python-docker-app:latest .
-          # Le '.' à la fin indique que le Dockerfile se trouve dans le répertoire courant (racine du dépôt)
-          docker build -t emna1belghith/python-docker-app:latest .
-          # Pousse l'image construite vers Docker Hub
-          docker push emna1belghith/python-docker-app:latest
+          IMAGE_NAME=emna1belghith/python-docker-app
+          IMAGE_TAG=${{ github.sha }} # Utilise le SHA du commit comme tag unique
+          
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+          docker push $IMAGE_NAME:$IMAGE_TAG
+          
+          # Optionnel: Pousser aussi avec le tag 'latest'
+          docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:latest
+
+  # Nouveau job : Tester l'image Docker après la publication
+  test-image:
+    # Ce job ne s'exécutera que si le job 'build-and-publish' a réussi
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (pour accéder au Dockerfile si nécessaire pour le contexte)
+        uses: actions/checkout@v4
+
+      - name: Pull Docker image from Docker Hub
+        run: |
+          IMAGE_NAME=emna1belghith/python-docker-app
+          IMAGE_TAG=${{ github.sha }}
+          docker pull $IMAGE_NAME:$IMAGE_TAG
+          echo "Image $IMAGE_NAME:$IMAGE_TAG pulled successfully."
+
+      - name: Run Docker container
+        run: |
+          IMAGE_NAME=emna1belghith/python-docker-app
+          IMAGE_TAG=${{ github.sha }}
+          # Exécute le conteneur en arrière-plan (-d) et mappe le port 5000
+          docker run -d --name my-flask-app -p 5000:5000 $IMAGE_NAME:$IMAGE_TAG
+          echo "Container 'my-flask-app' started on port 5000."
+
+      - name: Wait for the application to start
+        run: |
+          # Attend que l'application soit prête (ajuster le temps si nécessaire)
+          echo "Waiting for Flask app to start..."
+          sleep 10 # Attendre 10 secondes pour que l'app Flask démarre
+          echo "Wait complete. Attempting health check."
+
+      - name: Test the application (HTTP GET request)
+        run: |
+          # Envoie une requête curl et vérifie la réponse
+          # --fail fera échouer la commande si le statut HTTP n'est pas 2xx
+          # Utilisez l'IP du localhost du runner
+          RESPONSE=$(curl --fail http://localhost:5000)
+          echo "Application responded with: $RESPONSE"
+          # Vérifie si la réponse contient le texte attendu
+          if [[ "$RESPONSE" == *"Hello from Flask!"* ]]; then
+            echo "Test passed: 'Hello from Flask!' found in response."
+          else
+            echo "Test failed: Expected 'Hello from Flask!' but got '$RESPONSE'."
+            exit 1 # Fait échouer le job GitHub Actions
+          fi
+
+      - name: Clean up Docker container
+        if: always() # S'exécute toujours, même si les étapes précédentes échouent
+        run: |
+          echo "Stopping and removing container 'my-flask-app'..."
+          docker stop my-flask-app || true # '|| true' pour ne pas échouer si le conteneur n'existe pas
+          docker rm my-flask-app || true
+          echo "Container cleaned up."
